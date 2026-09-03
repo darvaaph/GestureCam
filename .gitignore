@@ -1,4 +1,45 @@
+# Virtual Environment
 .venv/
+venv/
+ENV/
+env/
+
+# Python Cache & Bytecode
 __pycache__/
-.pytest_cache/
 *.py[cod]
+*$py.class
+*.so
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Type Checking & Linting
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Operating System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Environment & Local Configurations
+.env
+.env.local
+*.log
+
