@@ -82,10 +82,7 @@ def _run_loop(camera: Camera, tracker: HandTracker) -> int:
         stable_gestures: list[Gesture] = []
         for index, landmarks in enumerate(hands):
             raw_gesture = recognizers[index].classify(landmarks)
-            stable_gesture = stabilizers[index].update(
-                raw_gesture,
-                recognizers[index].pinch_release_observation,
-            ).stable_gesture
+            stable_gesture = stabilizers[index].update(raw_gesture).stable_gesture
             stable_gestures.append(stable_gesture)
         for index in range(len(hands), 2):
             recognizers[index] = RawGestureRecognizer()
@@ -113,7 +110,7 @@ def _run_loop(camera: Camera, tracker: HandTracker) -> int:
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Blur the webcam when an open palm is detected")
+    parser = argparse.ArgumentParser(description="Blur the webcam feed when a peace/V gesture is detected")
     parser.add_argument(
         "--camera",
         type=int,

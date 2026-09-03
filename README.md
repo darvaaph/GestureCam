@@ -1,19 +1,60 @@
-# GestureCam — Open Palm Blur
+# GestureCam — Instant Webcam Privacy Blur via Peace Sign
 
-GestureCam menampilkan feed webcam yang telah dicerminkan, melacak hingga dua tangan, dan memburamkan seluruh feed ketika gesture peace/V (`PEACE`) terdeteksi stabil pada salah satu tangan. Overlay dan landmark tetap tajam agar status deteksi mudah dilihat.
+GestureCam adalah aplikasi *real-time computer vision* yang menampilkan feed webcam yang dicerminkan (*mirrored*), melacak hingga dua tangan secara simultan menggunakan MediaPipe, dan secara instan memburamkan (*full-frame Gaussian blur*) seluruh feed kamera saat gestur damai/peace (`PEACE` / simbol V) terdeteksi stabil pada salah satu tangan. 
 
-Runtime sekarang sengaja difokuskan pada satu interaksi:
+Overlay status HUD dan visualisasi landmark tangan tetap tajam di atas lapisan blur agar feedback status sistem selalu terbaca dengan jelas.
 
 ```text
-peace/V pada salah satu tangan -> debounce 3 observasi -> blur seluruh feed
-gesture berubah/tangan hilang -> blur mati
+[Webcam Feed] ──▶ [MediaPipe Landmarker] ──▶ [Heuristic Peace Detection]
+                                                       │
+                                            (Debounce 3 Frames)
+                                                       ▼
+[Normal Video] ◀──── (Gesture Release) ──── [Full-Frame 81x81 Blur]
 ```
 
-Face tracking, trigger meme, Cube, pinch selection, dan mode keyboard tidak dijalankan.
+---
 
-## Setup
+## Fitur Utama
 
-Gunakan CPython 3.12.x dan virtual environment project. Jangan memasang dependency secara global atau mencampur distribusi OpenCV lain dengan `opencv-contrib-python`.
+- **Real-Time Hand Tracking:** Melacak 21 titik sendi 3D hingga dua tangan secara bersamaan menggunakan Google MediaPipe Hand Landmarker Task (model TFLite float16).
+- **Scale-Invariant Geometric Heuristics:** Klasifikasi gestur berdasarkan sudut vektor fleksi jari dan rasio radial terhadap skala telapak tangan, sehingga akurat pada berbagai jarak tangan ke kamera.
+- **Anti-Flicker Debounce:** Memerlukan konfirmasi 3 frame berturut-turut sebelum mengaktifkan atau menonaktifkan blur, mencegah *flickering* akibat noise gerakan tangan sekilas.
+- **Layered In-Place Blur:** Menggunakan Gaussian Blur $81 \times 81$ in-place untuk privasi maksimal pada resolusi 720p, dengan OSD HUD (FPS, Camera Index, Status) yang tetap tajam di lapisan paling atas.
+- **Clean Architecture & 100% Testable:** Logika matematika dan stabilisasi terpisah dari hardware I/O, memungkinkan automated testing tanpa memerlukan perangkat webcam fisik.
+
+---
+
+## Struktur Repositori
+
+```text
+GestureCam/
+├── .gitignore               # Mengabaikan venv, cache, dan model binary (*.task)
+├── LICENSE                  # MIT License
+├── README.md                # Dokumentasi & panduan penggunaan
+├── requirements.txt         # OpenCV, MediaPipe, NumPy
+├── requirements-dev.txt     # Pytest
+├── assets/
+│   └── (hand_landmarker.task diunduh saat setup)
+├── gesturecam/
+│   ├── __init__.py
+│   ├── __main__.py          # Entrypoint, loop OpenCV, dan event handler
+│   ├── camera.py            # Wrapper VideoCapture dengan fault-tolerance
+│   ├── config.py            # Konfigurasi frame, model path, & parameter threshold
+│   ├── effects.py           # Gaussian blur & overlay visualizer
+│   ├── geometry.py          # Kalkulasi vektor, sudut fleksi, & normalisasi
+│   ├── gestures.py          # Klasifikasi Peace sign & debounce stabilizer
+│   └── hand_tracking.py     # Wrapper MediaPipe Tasks Vision
+└── tests/
+    ├── test_effects.py      # Tes blur, OSD, dan toleransi hardware kamera
+    ├── test_geometry.py     # Tes fungsi trigonometri & normalisasi koordinat
+    └── test_gestures.py     # Tes klasifikasi peace, rejection, & stabilizer
+```
+
+---
+
+## Setup & Instalasi
+
+Pastikan Anda menggunakan **Python 3.12.x**.
 
 ### 1. Buat dan Aktifkan Virtual Environment
 
@@ -25,21 +66,21 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-> **Catatan (PowerShell):** Jika muncul error *running scripts is disabled on this system*, izinkan eksekusi script untuk sesi terminal saat ini:
+> **Catatan (PowerShell):** Jika muncul pesan error *running scripts is disabled on this system*, izinkan eksekusi script untuk sesi terminal saat ini:
 > ```powershell
 > Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 > .\.venv\Scripts\Activate.ps1
 > ```
 
-### 2. Install Dependency & Download Model
+### 2. Install Dependency & Unduh Model
 
-Setelah virtual environment aktif (terdapat tanda `(.venv)` di terminal):
+Setelah virtual environment aktif (tanda `(.venv)` muncul di terminal):
 
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
 
-# Download model MediaPipe Hand Landmarker
+# Download model MediaPipe Hand Landmarker ke folder assets
 New-Item -ItemType Directory -Force assets | Out-Null
 Invoke-WebRequest `
   -Uri "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" `
@@ -52,34 +93,41 @@ Invoke-WebRequest `
 python -m gesturecam --camera 0
 ```
 
-Ganti `0` dengan `1`, `2`, dan seterusnya untuk memilih input kamera lain. Index aktif ditampilkan pada overlay.
+*Ganti `0` dengan `1`, `2`, dan seterusnya jika Anda menggunakan kamera eksternal.*
 
-## Penggunaan
+---
 
-- Tunjukkan gesture peace/V: telunjuk dan jari tengah terbuka, jari manis dan kelingking terlipat. Ibu jari boleh berada pada posisi apa pun.
-- Satu atau dua tangan dapat muncul bersamaan; peace pada salah satu tangan sudah mengaktifkan blur.
-- Tahan selama minimal tiga frame pemrosesan sampai `Gestures: PEACE` dan `Blur: ACTIVE` tampil.
-- Turunkan tangan atau ubah gesture untuk mematikan blur.
-- Tekan `Esc` atau `Q` untuk keluar dan melepas webcam.
+## Cara Penggunaan
 
-Overlay menampilkan camera index, gesture stabil tiap tangan, jumlah tangan `0/2` sampai `2/2`, status blur, FPS, dan tombol keluar.
+1. **Aktifkan Blur:** Angkat satu atau kedua tangan ke arah kamera dan tunjukkan gestur **Peace / V** (jari telunjuk dan jari tengah lurus terangkat, jari manis dan kelingking terlipat ke telapak). Posisi ibu jari bebas.
+2. **Tahan Gestur:** Tahan posisi tangan selama minimal 3 frame pemrosesan sampai teks status menampilkan `Blur: ACTIVE`.
+3. **Nonaktifkan Blur:** Turunkan tangan atau ubah gestur jari Anda untuk seketika mematikan blur.
+4. **Keluar:** Tekan tombol `Esc` atau `Q` pada keyboard untuk menutup aplikasi dan melepas webcam secara bersih.
 
-## Verifikasi
+---
+
+## Pengujian & Verifikasi
+
+Seluruh pengujian unit berjalan secara otomatis tanpa membutuhkan webcam fisik:
 
 ```powershell
-python -m pytest -q
+# Menjalankan test suite
+python -m pytest -v
+
+# Memeriksa kompilasi bytecode
 python -m compileall gesturecam tests
 ```
 
-Tes otomatis tidak membutuhkan webcam, window, network, atau manusia.
+---
 
-## Troubleshooting Peace
+## Troubleshooting
 
-- Pastikan telunjuk dan jari tengah terlihat lurus serta terpisah membentuk V.
-- Lipat jari manis dan kelingking dengan jelas; posisi ibu jari tidak dinilai.
-- Hindari tangan terlalu dekat, motion blur, cahaya belakang, atau latar yang menyatu dengan warna kulit.
-- Tunggu sampai overlay menunjukkan `Hand: DETECTED` sebelum mengevaluasi gesture.
-- Gesture harus stabil selama tiga observasi; satu frame tidak langsung mengaktifkan blur.
-- Bila kamera gagal, tutup aplikasi lain yang memakainya dan coba `--camera 1` atau index lain.
+- **Gestur Peace tidak terbaca:** Pastikan jari telunjuk dan tengah benar-benar tegak dan terbuka membentuk huruf V, serta jari manis dan kelingking terlipat jelas.
+- **Pencahayaan:** Hindari backlight yang terlalu silau di belakang Anda atau tangan terlalu dekat hingga keluar dari frame kamera.
+- **Kamera tidak terbuka:** Pastikan tidak ada aplikasi lain (Zoom, Teams, Google Meet, OBS) yang sedang mengunci webcam, atau coba parameter index kamera lain: `python -m gesturecam --camera 1`.
 
-Peace memakai geometry yang sama dengan classifier lain: index dan middle harus `EXTENDED`, ring dan pinky harus `FOLDED`, serta pinch harus tidak aktif. Blur penuh memakai kernel Gaussian 81×81 agar detail wajah dan latar jauh lebih tersamarkan pada feed 720p.
+---
+
+## Lisensi
+
+Proyek ini dilisensikan di bawah [MIT License](LICENSE).

@@ -30,7 +30,6 @@ def fist_hand():
     points = open_hand()
     for indices in ((5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20)):
         fold_finger(points, indices)
-    points[4] = (0.32, 0.65)
     return points
 
 
@@ -48,25 +47,31 @@ def peace_hand():
     return points
 
 
-def pinch_hand(ratio=0.1):
-    points = open_hand()
-    palm_scale = 0.3
-    points[4] = (points[8][0] + ratio * palm_scale, points[8][1])
+def three_fingers_hand():
+    points = peace_hand()
+    points[13:17] = open_hand()[13:17]
     return points
 
 
+def test_peace_gesture_detected() -> None:
+    assert RawGestureRecognizer().classify(peace_hand()) is Gesture.PEACE
+
+
 @pytest.mark.parametrize(
-    ("builder", "expected"),
-    [
-        (open_hand, Gesture.OPEN_PALM),
-        (fist_hand, Gesture.FIST),
-        (pointing_hand, Gesture.POINTING),
-        (peace_hand, Gesture.PEACE),
-        (pinch_hand, Gesture.PINCH),
-    ],
+    "hand_fn",
+    [open_hand, fist_hand, pointing_hand, three_fingers_hand],
 )
-def test_canonical_gestures(builder, expected) -> None:
-    assert RawGestureRecognizer().classify(builder()) is expected
+def test_non_peace_gestures_are_unknown(hand_fn) -> None:
+    assert RawGestureRecognizer().classify(hand_fn()) is Gesture.UNKNOWN
+
+
+def test_peace_ignores_thumb_position() -> None:
+    hand = peace_hand()
+    # Vary thumb coordinates drastically
+    hand[4] = hand[5]
+    assert RawGestureRecognizer().classify(hand) is Gesture.PEACE
+    hand[4] = (0.1, 0.9)
+    assert RawGestureRecognizer().classify(hand) is Gesture.PEACE
 
 
 def test_ambiguous_pose_is_unknown() -> None:
@@ -75,40 +80,8 @@ def test_ambiguous_pose_is_unknown() -> None:
     assert RawGestureRecognizer().classify(points) is Gesture.UNKNOWN
 
 
-def test_pinch_thresholds_and_hysteresis() -> None:
-    recognizer = RawGestureRecognizer()
-    assert recognizer.classify(pinch_hand(0.35)) is Gesture.PINCH
-    assert recognizer.classify(pinch_hand(0.42)) is Gesture.PINCH
-    assert recognizer.classify(pinch_hand(0.50)) is not Gesture.PINCH
-    assert recognizer.pinch_release_observation
-
-
-def test_pinch_has_priority_over_finger_postures() -> None:
-    points = fist_hand()
-    points[4] = (points[8][0] + 0.01, points[8][1])
-    assert RawGestureRecognizer().classify(points) is Gesture.PINCH
-
-
-def test_fist_rejects_extended_thumb_but_pointing_ignores_thumb() -> None:
-    fist = fist_hand()
-    fist[2:5] = open_hand()[2:5]
-    pointing = pointing_hand()
-    pointing[4] = pointing[5]
-    assert RawGestureRecognizer().classify(fist) is Gesture.UNKNOWN
-    assert RawGestureRecognizer().classify(pointing) is Gesture.POINTING
-
-
-def test_peace_ignores_thumb_but_requires_exact_two_extended_fingers() -> None:
-    peace = peace_hand()
-    peace[4] = peace[5]
-    assert RawGestureRecognizer().classify(peace) is Gesture.PEACE
-    three_fingers = peace_hand()
-    three_fingers[13:17] = open_hand()[13:17]
-    assert RawGestureRecognizer().classify(three_fingers) is Gesture.UNKNOWN
-
-
 def test_scale_equivalent_hands_match() -> None:
-    original = open_hand()
+    original = peace_hand()
     scaled = [(0.2 + x * 0.5, 0.1 + y * 0.5) for x, y in original]
     assert RawGestureRecognizer().classify(original) is RawGestureRecognizer().classify(scaled)
 
@@ -121,30 +94,27 @@ def test_invalid_landmarks_return_unknown(landmarks) -> None:
 def test_one_noisy_frame_does_not_change_stable_gesture() -> None:
     stabilizer = GestureStabilizer()
     for _ in range(3):
-        stabilizer.update(Gesture.OPEN_PALM)
-    result = stabilizer.update(Gesture.FIST)
-    assert result.stable_gesture is Gesture.OPEN_PALM
-    assert result.entered is None
+        stabilizer.update(Gesture.UNKNOWN)
+    result = stabilizer.update(Gesture.PEACE)
+    assert result.stable_gesture is Gesture.UNKNOWN
 
 
-def test_three_observations_emit_one_enter_and_hold_does_not_repeat() -> None:
+def test_three_consecutive_frames_activate_peace() -> None:
     stabilizer = GestureStabilizer()
-    results = [stabilizer.update(Gesture.POINTING) for _ in range(4)]
-    assert [result.entered for result in results] == [None, None, Gesture.POINTING, None]
-    assert results[-1].held
+    assert stabilizer.update(Gesture.PEACE).stable_gesture is Gesture.UNKNOWN
+    assert stabilizer.update(Gesture.PEACE).stable_gesture is Gesture.UNKNOWN
+    assert stabilizer.update(Gesture.PEACE).stable_gesture is Gesture.PEACE
+    # Stays stable on subsequent frames
+    assert stabilizer.update(Gesture.PEACE).stable_gesture is Gesture.PEACE
 
 
-def test_unknown_becomes_stable_after_three_observations_without_action() -> None:
-    stabilizer = GestureStabilizer()
-    results = [stabilizer.update(Gesture.UNKNOWN) for _ in range(4)]
-    assert [result.entered for result in results] == [None, None, Gesture.UNKNOWN, None]
-    assert not any(result.held for result in results)
-
-
-def test_three_release_observations_emit_one_pinch_release() -> None:
+def test_dropping_peace_returns_to_unknown_after_debounce() -> None:
     stabilizer = GestureStabilizer()
     for _ in range(3):
-        stabilizer.update(Gesture.PINCH)
-    results = [stabilizer.update(Gesture.POINTING, True) for _ in range(4)]
-    assert [result.released for result in results] == [None, None, Gesture.PINCH, None]
-    assert results[2].entered is Gesture.POINTING
+        stabilizer.update(Gesture.PEACE)
+    assert stabilizer.stable_gesture is Gesture.PEACE
+
+    # Drop peace
+    assert stabilizer.update(Gesture.UNKNOWN).stable_gesture is Gesture.PEACE
+    assert stabilizer.update(Gesture.UNKNOWN).stable_gesture is Gesture.PEACE
+    assert stabilizer.update(Gesture.UNKNOWN).stable_gesture is Gesture.UNKNOWN

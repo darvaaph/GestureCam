@@ -35,9 +35,9 @@ def test_full_frame_blur_strongly_reduces_detail() -> None:
 
 def test_peace_on_either_hand_activates_blur() -> None:
     assert app.should_blur([Gesture.PEACE])
-    assert app.should_blur([Gesture.FIST, Gesture.PEACE])
+    assert app.should_blur([Gesture.UNKNOWN, Gesture.PEACE])
     assert not app.should_blur([])
-    assert not app.should_blur([Gesture.OPEN_PALM, Gesture.FIST])
+    assert not app.should_blur([Gesture.UNKNOWN])
 
 
 class FakeCapture:
