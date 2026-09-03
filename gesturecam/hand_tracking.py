@@ -14,7 +14,7 @@ class HandTracker:
         options = mp.tasks.vision.HandLandmarkerOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
             running_mode=mp.tasks.vision.RunningMode.VIDEO,
-            num_hands=1,
+            num_hands=2,
             min_hand_detection_confidence=0.60,
             min_hand_presence_confidence=0.60,
             min_tracking_confidence=0.60,
@@ -28,15 +28,16 @@ class HandTracker:
             ) from exc
         self._last_timestamp_ms = -1
 
-    def detect(self, mirrored_bgr_frame: np.ndarray, timestamp_ms: int) -> list[Point] | None:
+    def detect(self, mirrored_bgr_frame: np.ndarray, timestamp_ms: int) -> list[list[Point]]:
         timestamp_ms = max(timestamp_ms, self._last_timestamp_ms + 1)
         self._last_timestamp_ms = timestamp_ms
         rgb = cv2.cvtColor(mirrored_bgr_frame, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         result = self._landmarker.detect_for_video(image, timestamp_ms)
-        if not result.hand_landmarks:
-            return None
-        return [(float(item.x), float(item.y)) for item in result.hand_landmarks[0]]
+        return [
+            [(float(item.x), float(item.y)) for item in hand]
+            for hand in result.hand_landmarks[:2]
+        ]
 
     def close(self) -> None:
         self._landmarker.close()

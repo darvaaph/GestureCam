@@ -1,9 +1,6 @@
-from copy import deepcopy
-
 import pytest
 
 from gesturecam.gestures import (
-    CursorSmoother,
     Gesture,
     GestureStabilizer,
     RawGestureRecognizer,
@@ -44,6 +41,13 @@ def pointing_hand():
     return points
 
 
+def peace_hand():
+    points = open_hand()
+    for indices in ((13, 14, 15, 16), (17, 18, 19, 20)):
+        fold_finger(points, indices)
+    return points
+
+
 def pinch_hand(ratio=0.1):
     points = open_hand()
     palm_scale = 0.3
@@ -57,6 +61,7 @@ def pinch_hand(ratio=0.1):
         (open_hand, Gesture.OPEN_PALM),
         (fist_hand, Gesture.FIST),
         (pointing_hand, Gesture.POINTING),
+        (peace_hand, Gesture.PEACE),
         (pinch_hand, Gesture.PINCH),
     ],
 )
@@ -91,6 +96,15 @@ def test_fist_rejects_extended_thumb_but_pointing_ignores_thumb() -> None:
     pointing[4] = pointing[5]
     assert RawGestureRecognizer().classify(fist) is Gesture.UNKNOWN
     assert RawGestureRecognizer().classify(pointing) is Gesture.POINTING
+
+
+def test_peace_ignores_thumb_but_requires_exact_two_extended_fingers() -> None:
+    peace = peace_hand()
+    peace[4] = peace[5]
+    assert RawGestureRecognizer().classify(peace) is Gesture.PEACE
+    three_fingers = peace_hand()
+    three_fingers[13:17] = open_hand()[13:17]
+    assert RawGestureRecognizer().classify(three_fingers) is Gesture.UNKNOWN
 
 
 def test_scale_equivalent_hands_match() -> None:
@@ -134,14 +148,3 @@ def test_three_release_observations_emit_one_pinch_release() -> None:
     results = [stabilizer.update(Gesture.POINTING, True) for _ in range(4)]
     assert [result.released for result in results] == [None, None, Gesture.PINCH, None]
     assert results[2].entered is Gesture.POINTING
-
-
-def test_cursor_ema_initializes_at_target_and_resets() -> None:
-    points = open_hand()
-    smoother = CursorSmoother(alpha=0.35)
-    assert smoother.update(points, False) == points[8]
-    moved = deepcopy(points)
-    moved[8] = (0.82, 0.50)
-    assert smoother.update(moved, False) == pytest.approx((0.56, 0.24))
-    smoother.reset()
-    assert smoother.update(moved, False) == moved[8]

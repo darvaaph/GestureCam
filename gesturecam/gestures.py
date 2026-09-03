@@ -5,7 +5,6 @@ from enum import Enum, auto
 from typing import Sequence
 
 from .config import (
-    CURSOR_EMA_ALPHA,
     FLOAT_COMPARISON_TOLERANCE,
     FINGER_EXTENDED_ANGLE,
     FINGER_EXTENDED_RADIAL_RATIO,
@@ -39,6 +38,7 @@ class Gesture(Enum):
     OPEN_PALM = auto()
     FIST = auto()
     POINTING = auto()
+    PEACE = auto()
     PINCH = auto()
     UNKNOWN = auto()
 
@@ -108,6 +108,13 @@ class RawGestureRecognizer:
             posture is FingerPosture.FOLDED for posture in fingers[1:]
         ):
             return Gesture.POINTING
+        if (
+            fingers[0] is FingerPosture.EXTENDED
+            and fingers[1] is FingerPosture.EXTENDED
+            and fingers[2] is FingerPosture.FOLDED
+            and fingers[3] is FingerPosture.FOLDED
+        ):
+            return Gesture.PEACE
         if all(posture is FingerPosture.EXTENDED for posture in fingers) and thumb is FingerPosture.EXTENDED:
             return Gesture.OPEN_PALM
         return Gesture.UNKNOWN
@@ -176,29 +183,3 @@ class GestureStabilizer:
             self.stable_gesture = raw_gesture
             entered = raw_gesture
         return GestureUpdate(self.stable_gesture, entered=entered, released=Gesture.PINCH)
-
-
-class CursorSmoother:
-    def __init__(self, alpha: float = CURSOR_EMA_ALPHA) -> None:
-        self.alpha = alpha
-        self.value: Point | None = None
-
-    def update(self, landmarks: Sequence[Point], pinch_active: bool) -> Point:
-        index_tip = landmarks[INDEX_TIP]
-        thumb_tip = landmarks[THUMB_TIP]
-        target = (
-            ((index_tip[0] + thumb_tip[0]) / 2.0, (index_tip[1] + thumb_tip[1]) / 2.0)
-            if pinch_active
-            else index_tip
-        )
-        if self.value is None:
-            self.value = target
-        else:
-            self.value = (
-                self.alpha * target[0] + (1.0 - self.alpha) * self.value[0],
-                self.alpha * target[1] + (1.0 - self.alpha) * self.value[1],
-            )
-        return self.value
-
-    def reset(self) -> None:
-        self.value = None

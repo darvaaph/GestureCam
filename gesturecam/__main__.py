@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 
 if sys.version_info[:2] != (3, 12):
@@ -11,31 +12,15 @@ if sys.version_info[:2] != (3, 12):
     raise SystemExit(1)
 
 import time
-import argparse
 from collections import deque
 
 import cv2
 
 from .camera import Camera
-from .config import (
-    HAND_LOSS_GRACE_MS,
-    MODEL_PATH,
-    WINDOW_NAME,
-    validate_model_asset,
-    validate_python_version,
-)
-from .effects import (
-    apply_blur,
-    apply_full_frame_blur,
-    draw_cube,
-    draw_cursor,
-    draw_landmarks,
-    draw_selection,
-    draw_status,
-)
-from .gestures import CursorSmoother, Gesture, GestureStabilizer, RawGestureRecognizer
+from .config import MODEL_PATH, WINDOW_NAME, validate_model_asset, validate_python_version
+from .effects import apply_full_frame_blur, draw_landmarks, draw_status
+from .gestures import Gesture, GestureStabilizer, RawGestureRecognizer
 from .hand_tracking import HandTracker
-from .interaction import InteractionController
 
 
 def _rolling_fps(samples: deque[float]) -> float:
@@ -52,12 +37,16 @@ def _window_closed() -> bool:
         return True
 
 
+def should_blur(stable_gestures: list[Gesture]) -> bool:
+    return Gesture.PEACE in stable_gestures
+
+
 def _show_startup_frame(camera: Camera) -> None:
     frame = camera.read()
     while frame is None:
         frame = camera.read()
     output = cv2.flip(frame, 1)
-    cv2.rectangle(output, (0, 0), (370, 48), (25, 25, 25), -1)
+    cv2.rectangle(output, (0, 0), (330, 48), (25, 25, 25), -1)
     cv2.putText(
         output,
         "Starting hand tracker...",
@@ -73,14 +62,11 @@ def _show_startup_frame(camera: Camera) -> None:
 
 
 def _run_loop(camera: Camera, tracker: HandTracker) -> int:
-    recognizer = RawGestureRecognizer()
-    stabilizer = GestureStabilizer()
-    smoother = CursorSmoother()
-    controller = InteractionController()
+    recognizers = [RawGestureRecognizer(), RawGestureRecognizer()]
+    stabilizers = [GestureStabilizer(), GestureStabilizer()]
     frame_times: deque[float] = deque(maxlen=60)
-    hand_absent_since: float | None = None
 
-    while not controller.shutdown_requested:
+    while True:
         try:
             frame = camera.read()
         except RuntimeError as exc:
@@ -91,62 +77,43 @@ def _run_loop(camera: Camera, tracker: HandTracker) -> int:
 
         mirrored = cv2.flip(frame, 1)
         now = time.perf_counter()
-        now_ms = now * 1000.0
         frame_times.append(now)
-        landmarks = tracker.detect(mirrored, int(now_ms))
-        hand_present = landmarks is not None
-        cursor = None
-        update = None
-
-        if landmarks is not None:
-            hand_absent_since = None
-            raw_gesture = recognizer.classify(landmarks)
-            update = stabilizer.update(raw_gesture, recognizer.pinch_release_observation)
-            cursor = smoother.update(landmarks, recognizer.pinch_active)
-        else:
-            hand_absent_since = hand_absent_since or now_ms
-            if now_ms - hand_absent_since >= HAND_LOSS_GRACE_MS:
-                smoother.reset()
-
-        height, width = mirrored.shape[:2]
-        controller.process(
-            update,
-            cursor,
-            recognizer.pinch_active,
-            hand_present,
-            now_ms,
-            (width, height),
-        )
+        hands = tracker.detect(mirrored, int(now * 1000.0))
+        stable_gestures: list[Gesture] = []
+        for index, landmarks in enumerate(hands):
+            raw_gesture = recognizers[index].classify(landmarks)
+            stable_gesture = stabilizers[index].update(
+                raw_gesture,
+                recognizers[index].pinch_release_observation,
+            ).stable_gesture
+            stable_gestures.append(stable_gesture)
+        for index in range(len(hands), 2):
+            recognizers[index] = RawGestureRecognizer()
+            stabilizers[index] = GestureStabilizer()
 
         output = mirrored.copy()
-        if hand_present and stabilizer.stable_gesture is Gesture.OPEN_PALM:
+        if should_blur(stable_gestures):
             apply_full_frame_blur(output)
-        else:
-            apply_blur(output, controller.blur_rect)
-        draw_cube(output, controller.cube_rect)
-        draw_selection(output, controller.preview_rect)
-        if landmarks is not None:
+        for landmarks in hands:
             draw_landmarks(output, landmarks)
-        draw_cursor(output, cursor, recognizer.pinch_active)
         draw_status(
             output,
-            controller,
-            stabilizer.stable_gesture,
-            hand_present,
+            stable_gestures,
+            len(hands),
             _rolling_fps(frame_times),
             camera.camera_index,
         )
         cv2.imshow(WINDOW_NAME, output)
 
         key = cv2.waitKey(1)
-        controller.handle_key(key & 0xFF if key >= 0 else None)
+        if key >= 0 and (key & 0xFF) in {27, ord("q"), ord("Q")}:
+            return 0
         if _window_closed():
-            controller.shutdown_requested = True
-    return 0
+            return 0
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="GestureCam webcam gesture prototype")
+    parser = argparse.ArgumentParser(description="Blur the webcam when an open palm is detected")
     parser.add_argument(
         "--camera",
         type=int,

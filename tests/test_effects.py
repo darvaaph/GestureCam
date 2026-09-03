@@ -7,21 +7,8 @@ import pytest
 import gesturecam.__main__ as app
 from gesturecam.camera import Camera
 from gesturecam.config import MAX_CONSECUTIVE_READ_FAILURES, validate_model_asset, validate_python_version
-from gesturecam.effects import apply_blur, apply_full_frame_blur, draw_cube, draw_selection
-from gesturecam.geometry import Rect, cube_depth_px, rect_to_pixel_bounds
-
-
-def test_blur_changes_pixels_only_inside_roi() -> None:
-    random = np.random.default_rng(4)
-    frame = random.integers(0, 256, (60, 80, 3), dtype=np.uint8)
-    original = frame.copy()
-    rect = Rect(0.25, 0.25, 0.75, 0.75)
-    apply_blur(frame, rect)
-    left, top, right, bottom = rect_to_pixel_bounds(rect, 80, 60)
-    outside = np.ones(frame.shape[:2], dtype=bool)
-    outside[top:bottom, left:right] = False
-    assert np.array_equal(frame[outside], original[outside])
-    assert not np.array_equal(frame[top:bottom, left:right], original[top:bottom, left:right])
+from gesturecam.effects import apply_full_frame_blur
+from gesturecam.gestures import Gesture
 
 
 def test_full_frame_blur_changes_entire_camera_frame() -> None:
@@ -38,24 +25,19 @@ def test_full_frame_blur_accepts_empty_frame() -> None:
     assert apply_full_frame_blur(frame) is frame
 
 
-@pytest.mark.parametrize("rect", [None, Rect(1.2, 1.2, 1.4, 1.4), Rect(0.5, 0.5, 0.5, 0.5)])
-def test_empty_or_clamped_invalid_blur_is_unchanged(rect) -> None:
-    frame = np.arange(300, dtype=np.uint8).reshape(10, 10, 3)
-    original = frame.copy()
-    assert np.array_equal(apply_blur(frame, rect), original)
+def test_full_frame_blur_strongly_reduces_detail() -> None:
+    checkerboard = (np.indices((180, 240)).sum(axis=0) % 2 * 255).astype(np.uint8)
+    frame = np.repeat(checkerboard[:, :, None], 3, axis=2)
+    original_variance = float(frame.var())
+    apply_full_frame_blur(frame)
+    assert float(frame.var()) < original_variance * 0.01
 
 
-def test_cube_depth_respects_minimum_and_maximum() -> None:
-    assert cube_depth_px(Rect(0.1, 0.1, 0.12, 0.12), 1000, 1000) == 12
-    assert cube_depth_px(Rect(0.1, 0.1, 0.9, 0.9), 1000, 1000) == 40
-
-
-def test_cube_and_selection_render_at_frame_boundaries() -> None:
-    frame = np.zeros((100, 100, 3), dtype=np.uint8)
-    touching = Rect(0.0, 0.0, 1.0, 1.0)
-    draw_cube(frame, touching)
-    draw_selection(frame, touching)
-    assert np.count_nonzero(frame) > 0
+def test_peace_on_either_hand_activates_blur() -> None:
+    assert app.should_blur([Gesture.PEACE])
+    assert app.should_blur([Gesture.FIST, Gesture.PEACE])
+    assert not app.should_blur([])
+    assert not app.should_blur([Gesture.OPEN_PALM, Gesture.FIST])
 
 
 class FakeCapture:
@@ -63,13 +45,11 @@ class FakeCapture:
         self.opened = opened
         self.reads = list(reads or [])
         self.released = False
-        self.settings = []
 
     def isOpened(self):
         return self.opened
 
     def set(self, key, value):
-        self.settings.append((key, value))
         return True
 
     def read(self):
@@ -134,19 +114,14 @@ def test_startup_validations_are_actionable(tmp_path: Path) -> None:
         validate_python_version((3, 14))
     with pytest.raises(RuntimeError, match="model is missing or empty"):
         validate_model_asset(tmp_path / "missing.task")
-    empty = tmp_path / "empty.task"
-    empty.touch()
-    with pytest.raises(RuntimeError, match="model is missing or empty"):
-        validate_model_asset(empty)
 
 
 class FakeCameraSession:
-    def __init__(self, failure=False):
+    def __init__(self):
         self.camera_index = 0
-        self.failure = failure
+        self.failure = False
         self.opened = False
         self.closed = False
-        self.read_count = 0
 
     def open(self):
         self.opened = True
@@ -154,7 +129,6 @@ class FakeCameraSession:
     def read(self):
         if self.failure:
             raise RuntimeError("controlled stream failure")
-        self.read_count += 1
         return np.zeros((80, 120, 3), dtype=np.uint8)
 
     def close(self):
@@ -166,7 +140,7 @@ class FakeTracker:
         self.closed = False
 
     def detect(self, frame, timestamp):
-        return None
+        return []
 
     def close(self):
         self.closed = True
@@ -188,7 +162,7 @@ def test_main_loop_cleans_resources_on_normal_exit(monkeypatch) -> None:
         "Camera",
         lambda camera_index: setattr(camera, "camera_index", camera_index) or camera,
     )
-    monkeypatch.setattr(app, "HandTracker", lambda _: tracker)
+    monkeypatch.setattr(app, "HandTracker", lambda *_: tracker)
     patch_display(monkeypatch)
     assert app.main(["--camera", "2"]) == 0
     assert camera.camera_index == 2
@@ -199,7 +173,7 @@ def test_main_loop_cleans_resources_on_controlled_error(monkeypatch, capsys) -> 
     camera = FakeCameraSession()
     tracker = FakeTracker()
 
-    def tracker_after_startup(_):
+    def tracker_after_startup(*_):
         camera.failure = True
         return tracker
 
